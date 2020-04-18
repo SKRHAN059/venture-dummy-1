@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <fragment xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:map="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:id="@+id/map"
+        android:name="com.google.android.gms.maps.SupportMapFragment"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        tools:context=".MapsActivity" />
+
+    <Button
+        android:id="@+id/back_button"
+        android:layout_width="70dp"
+        android:layout_height="40dp"
+        android:layout_marginTop="5dp"
+        android:layout_marginLeft="10dp"
+        android:layout_below="@+id/search_bar"
+        android:text="Back"
+        android:stateListAnimator="@null"
+        android:elevation="15dp"
+        android:background="#ffffff"/>
+
+    <TextView
+        android:id="@+id/trip_id"
+        android:layout_width="70dp"
+        android:layout_height="40dp"
+        android:layout_below="@+id/search_bar"
+        android:layout_alignParentEnd="true"
+        android:layout_marginTop="5dp"
+        android:layout_marginRight="10dp"
+        android:elevation="15dp"
+        android:gravity="center"
+        android:text=" TRIP KEY"
+        android:textColor="#010014"
+        android:background="#ffffff" />
+
+    <RelativeLayout
+        android:id="@+id/search_bar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_marginLeft="10dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginRight="10dp"
+        android:elevation="10dp"
+        android:background="#ffffff">
+
+<!--        <EditText-->
+<!--            android:id="@+id/search_edit"-->
+<!--            android:layout_width="match_parent"-->
+<!--            android:layout_height="match_parent"-->
+<!--            android:layout_toRightOf="@+id/ic_search_icon"-->
+<!--            android:layout_centerVertical="true"-->
+<!--            android:background="@null"-->
+<!--            android:imeOptions="actionSearch"-->
+<!--            android:hint="Search address here"-->
+<!--            android:layout_marginLeft="5dp"/>-->
+
+<!--        <ImageView-->
+<!--            android:layout_width="wrap_content"-->
+<!--            android:layout_height="wrap_content"-->
+<!--            android:src="@drawable/ic_search_icon"-->
+<!--            android:id="@+id/ic_search_icon"-->
+<!--            android:layout_alignParentStart="true"-->
+<!--            android:layout_centerInParent="true"-->
+<!--            android:layout_marginLeft="10dp"/>-->
+
+        <fragment android:id="@+id/autocomplete_fragment"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
+            android:hint="Search location here"/>
+
+        </RelativeLayout>
+
+    <ImageView
+        android:layout_width="35dp"
+        android:layout_height="35dp"
+        android:id="@+id/ic_gps_icon"
+        android:src="@drawable/ic_gps_fixed"
+        android:layout_alignParentRight="true"
+        android:layout_marginRight="10dp"
+        android:layout_marginTop="10dp"
+        android:layout_below="@+id/trip_id"/>
+
+</RelativeLayout>

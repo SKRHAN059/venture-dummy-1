@@ -1,0 +1,83 @@
+{
+  "project_info": {
+    "project_number": "7312841254",
+    "firebase_url": "https://travelmate-68580.firebaseio.com",
+    "project_id": "travelmate-68580",
+    "storage_bucket": "travelmate-68580.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:7312841254:android:98136f7b08ffe80a97e4e7",
+        "android_client_info": {
+          "package_name": "com.example.maptest1"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "7312841254-nf55n4pd9kh2q1g398qu0vps2tajp1ec.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQxUn07741Pl_oREZwzgAnVJdPnQGgIBI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "7312841254-nf55n4pd9kh2q1g398qu0vps2tajp1ec.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "7312841254-f247rcpp85rf100ne80pj3m74gi5esdf.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.GeorgehHuang.TravelMate"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:7312841254:android:95b1f6012b99a15c",
+        "android_client_info": {
+          "package_name": "travelmate.davidchu.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "7312841254-nf55n4pd9kh2q1g398qu0vps2tajp1ec.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQxUn07741Pl_oREZwzgAnVJdPnQGgIBI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "7312841254-nf55n4pd9kh2q1g398qu0vps2tajp1ec.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "7312841254-f247rcpp85rf100ne80pj3m74gi5esdf.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.GeorgehHuang.TravelMate"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
