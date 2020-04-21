@@ -8,29 +8,16 @@ import androidx.fragment.app.FragmentActivity;
 
 import android.Manifest;
 import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.location.Address;
-import android.location.Geocoder;
 import android.location.Location;
-import android.location.LocationListener;
 import android.location.LocationManager;
-import android.media.Image;
 import android.os.Bundle;
-import android.os.Handler;
-import android.provider.Settings;
-import android.text.Html;
 import android.util.Log;
-import android.view.KeyEvent;
 import android.view.View;
-import android.view.WindowManager;
-import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -40,6 +27,7 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.model.Marker;
 import com.google.android.libraries.places.api.Places;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -72,6 +60,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private boolean mLocationPermissionGranted = false;
     private FusedLocationProviderClient mFusedLocationProviderClient;
     private ImageView mGpsIcon;
+    private Button mMapRouteButton;
+    private Button mRouteCancelButton;
+    private Marker mPlaceMarker;
 
     //API key
     private final String mApiKey = "AIzaSyAaXzqfxCReWdAoHbHecNQDVqCedv1qChQ";
@@ -95,9 +86,26 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
             @Override
             public void onPlaceSelected(Place place) {
-                // TODO: Get info about the selected place.
                 locateAddress(place);
+                mMapRouteButton.setVisibility(View.VISIBLE);
+                mRouteCancelButton.setVisibility(View.VISIBLE);
                 Log.i(TAG, "Place: " + place.getName() + ", " + place.getId());
+
+                mMapRouteButton.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        //TODO: route polylines from current location to marker
+                    }
+                });
+
+                mRouteCancelButton.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        mPlaceMarker.remove();
+                        mMapRouteButton.setVisibility(View.GONE);
+                        mRouteCancelButton.setVisibility(View.GONE);
+                    }
+                });
             }
 
             @Override
@@ -150,6 +158,14 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 openStartActivity();
             }
         });
+
+        //Set route button and visibility for map route button
+        mMapRouteButton = findViewById(R.id.map_route);
+        mMapRouteButton.setVisibility(View.GONE);
+
+        //Set route cancel button and visibility for cancel button
+        mRouteCancelButton = findViewById(R.id.cancel_map_route);
+        mRouteCancelButton.setVisibility(View.GONE);
 
         //Set GPS fixed widget to move camera to current location
         mGpsIcon = findViewById(R.id.ic_gps_icon);
@@ -325,15 +341,15 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     public void locateAddress(Place place) {
         String address = place.getAddress();
-        Toast.makeText(this, address, Toast.LENGTH_LONG).show();
-        markLocationOnMap(new LatLng(place.getLatLng().latitude, place.getLatLng().longitude), place.getAddress());
-//                this.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+//        markLocationOnMap(new LatLng(place.getLatLng().latitude, place.getLatLng().longitude), place.getAddress());
+        mPlaceMarker = markLocationOnMap(place.getLatLng(), address);
     }
 
-    public void markLocationOnMap(LatLng latLng, String name) {
+    public Marker markLocationOnMap(LatLng latLng, String name) {
         MarkerOptions markerOptions = new MarkerOptions().position(latLng).title(name);
-        mMap.addMarker(markerOptions);
+        Marker marker = mMap.addMarker(markerOptions);
         mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(latLng.latitude, latLng.longitude), 16f));
+        return marker;
     }
 
 
