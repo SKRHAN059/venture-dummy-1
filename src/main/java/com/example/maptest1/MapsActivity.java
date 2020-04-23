@@ -15,6 +15,7 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -38,31 +39,42 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 import com.google.android.libraries.places.api.model.Place;
-import com.google.android.libraries.places.api.model.TypeFilter;
-import com.google.android.libraries.places.api.net.PlacesClient;
 import com.google.android.libraries.places.widget.AutocompleteSupportFragment;
 import com.google.android.libraries.places.widget.listener.PlaceSelectionListener;
-
-import java.io.IOException;
-import java.security.Key;
-import java.util.ArrayList;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.Map;
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
 
-    //variables
+    //Main activity variables
     private static GoogleMap mMap;
-    private final String TAG = "MapsActivity";
-    private Button mBackButton;
+    private DatabaseReference mDatabase = FirebaseDatabase.getInstance().getReference();
+    private DataSnapshot mDataSnapshot;
+    private Trip mTrip;
+    private Car mCar;
+
+    //Location variables
+    private LatLng mCurrentLocation;
     private boolean mLocationPermissionGranted = false;
     private FusedLocationProviderClient mFusedLocationProviderClient;
     private ImageView mGpsIcon;
+    private Place mPlace;
+    private Handler mHandler = new Handler();
+    private Runnable mRunnable;
+
+    //Buttons
+    private Button mBackButton;
     private Button mMapRouteButton;
     private Button mRouteCancelButton;
     private Marker mPlaceMarker;
+
+    //Logging
+    private final String TAG = "MapsActivity";
 
     //API key
     private final String mApiKey = "AIzaSyAaXzqfxCReWdAoHbHecNQDVqCedv1qChQ";
@@ -86,7 +98,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
             @Override
             public void onPlaceSelected(Place place) {
+                mPlace = place;
                 locateAddress(place);
+                mBackButton.setVisibility(View.GONE);
                 mMapRouteButton.setVisibility(View.VISIBLE);
                 mRouteCancelButton.setVisibility(View.VISIBLE);
                 Log.i(TAG, "Place: " + place.getName() + ", " + place.getId());
@@ -95,6 +109,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     @Override
                     public void onClick(View v) {
                         //TODO: route polylines from current location to marker
+
+                        //temporary call to populate trip into firebase
+                        createTrip();
                     }
                 });
 
@@ -104,6 +121,11 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                         mPlaceMarker.remove();
                         mMapRouteButton.setVisibility(View.GONE);
                         mRouteCancelButton.setVisibility(View.GONE);
+                        mBackButton.setVisibility(View.VISIBLE);
+
+                        TextView tripIDView = findViewById(R.id.trip_id);
+                        tripIDView.setVisibility(View.GONE);
+                        tripIDView.setText("Trip Key");
                     }
                 });
             }
@@ -112,6 +134,21 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             public void onError(Status status) {
                 // TODO: Handle the error.
                 Log.i(TAG, "An error occurred: " + status);
+            }
+        });
+
+        mDatabase.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                if (dataSnapshot.exists()) {
+                    Log.d(TAG, "onDataChange: " + dataSnapshot.toString());
+                    mDataSnapshot = dataSnapshot;
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError databaseError) {
+
             }
         });
 
@@ -146,9 +183,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         mMap = googleMap;
 
         //Obtain and populate Trip Key on map layout
-        TextView tripID = findViewById(R.id.trip_id);
-        Trip trip = new Trip(0, 0, "i don't know");
-        tripID.append(HtmlCompat.fromHtml(trip.getTripID(), HtmlCompat.FROM_HTML_MODE_LEGACY));
+        TextView tripIDView = findViewById(R.id.trip_id);
+        tripIDView.setVisibility(View.GONE);
 
         //Set button listener for returning to Start Activity
         mBackButton = findViewById(R.id.back_button);
@@ -200,8 +236,17 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     if (task.isSuccessful()) {
                         Location currentLocation = (Location) task.getResult();
                         if (mMap != null && currentLocation!= null) {
-                            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(currentLocation.getLatitude(), currentLocation.getLongitude()), 16f));
+                            Log.d(TAG, "Obtaining and mapping to current location");
+                            mCurrentLocation = new LatLng(currentLocation.getLatitude(), currentLocation.getLongitude());
+                            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mCurrentLocation, 16f));
                             mMap.getUiSettings().setMyLocationButtonEnabled(false);
+
+                            //If join trip activity
+                            String tripID = getIntent().getStringExtra("tripID");
+                            if (tripID != null) {
+                                Log.d(TAG, "Calling join trip");
+                                joinTrip(tripID);
+                            }
                         }
                     }
                 }
@@ -269,7 +314,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
      * checks if GPS is enabled
      * @return true if GPS is enabled, false otherwise
      */
-    public boolean isMapsEnabled(){
+    private boolean isMapsEnabled(){
         final LocationManager locationManager = (LocationManager) getSystemService( Context.LOCATION_SERVICE );
 
         if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
@@ -339,12 +384,20 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         }
     }
 
+    /**
+     * Function to call function to mark location on map and initialize marker member variable
+     * @param place argument to mark on map
+     */
     public void locateAddress(Place place) {
-        String address = place.getAddress();
-//        markLocationOnMap(new LatLng(place.getLatLng().latitude, place.getLatLng().longitude), place.getAddress());
-        mPlaceMarker = markLocationOnMap(place.getLatLng(), address);
+        mPlaceMarker = markLocationOnMap(place.getLatLng(), place.getAddress());
     }
 
+    /**
+     * Function to mark specified location on map
+     * @param latLng coordinates to create marker at
+     * @param name name of marker
+     * @return Marker object to assign to member variable Marker
+     */
     public Marker markLocationOnMap(LatLng latLng, String name) {
         MarkerOptions markerOptions = new MarkerOptions().position(latLng).title(name);
         Marker marker = mMap.addMarker(markerOptions);
@@ -352,13 +405,112 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         return marker;
     }
 
+    /**
+     * Function to create trip
+     * Creates new trip object and populates trip and car info into firebase
+     */
+    private void createTrip() {
+        //Create Trip and Car objects for Trip
+        mTrip = new Trip(mPlace.getLatLng(), mPlace.getAddress());
+        mCar = new Car(65, mCurrentLocation, mTrip.getTripID());
+        mTrip.addCar(mCar);
+
+        //Text View for trip ID
+        TextView tripID = findViewById(R.id.trip_id);
+        String htmlTripID = "<br /><font color=#2B97EB>"+mTrip.getTripID()+"</font>";
+        tripID.append(HtmlCompat.fromHtml(htmlTripID, HtmlCompat.FROM_HTML_MODE_LEGACY));
+        tripID.setVisibility(View.VISIBLE);
+
+        //Add trip info to firebase
+        mDatabase.child("trips").child(mTrip.getTripID()).child("address").setValue(mTrip.getDestAddress());
+        mDatabase.child("trips").child(mTrip.getTripID()).child("id").setValue(mTrip.getTripID());
+        mDatabase.child("trips").child(mTrip.getTripID()).child("latitude").setValue(mTrip.getTripLat());
+        mDatabase.child("trips").child(mTrip.getTripID()).child("longitude").setValue(mTrip.getTripLong());
+
+        //Add car info to trip in firebase
+        mDatabase.child("trips").child(mTrip.getTripID()).child("cars").child(mCar.getCarName()).child("latitude").setValue(mCar.getCarLat());
+        mDatabase.child("trips").child(mTrip.getTripID()).child("cars").child(mCar.getCarName()).child("longitude").setValue(mCar.getCarLong());
+
+        startPartyLocationsRunnable();
+    }
+
+    /**
+     * Runnable to request party (car) locations every 4 seconds
+     */
+    private void startPartyLocationsRunnable(){
+        Log.d(TAG, "startUserLocationsRunnable: starting runnable for retrieving updated locations.");
+        mHandler.postDelayed(mRunnable = new Runnable() {
+            @Override
+            public void run() {
+                mHandler.postDelayed(mRunnable, 4000);
+                updatePartyLocations();
+            }
+        }, 4000);
+    }
+
+    /**
+     * Function to create new car to add to trip in firebase
+     * @param tripID specified trip id to add new car to
+     */
+    private void joinTrip(String tripID) {
+        if (mDataSnapshot != null) {
+            Log.d(TAG, "Joining trip: " + mDataSnapshot.toString());
+
+            DataSnapshot dataSnapshot = mDataSnapshot.child("trips").child(tripID);
+            if (dataSnapshot.getValue() == null) {
+                //TODO: handle invalid trip ID entry from user
+                Log.d(TAG, "joinTrip: Exiting: Handle trip IDs not in Firebase");
+                System.exit(0);
+            }
+
+            getPartyLocations(tripID);
+
+            //iterate through all cars in trip to determine new car ID
+            int newCarID = 0;
+            for (int i = 0; i < mTrip.getCars().size(); i++) {
+                if (mTrip.getCars().get(i).getCarID() > newCarID) {
+                    newCarID = mTrip.getCars().get(i).getCarID();
+                }
+            }
+            newCarID++;
+            Car newCar = new Car(newCarID, mCurrentLocation, tripID);
+            mTrip.addCar(newCar);
+
+            //Add car info to trip in firebase respectively
+            Log.d(TAG, "Joining trip: " + newCar.getCarName());
+            mDatabase.child("trips").child(tripID).child("cars").child(newCar.getCarName()).child("latitude").setValue(mCurrentLocation.latitude);
+            mDatabase.child("trips").child(tripID).child("cars").child(newCar.getCarName()).child("longitude").setValue(mCurrentLocation.longitude);
+        }
+    }
+
+    /**
+     * Function to put update car coordinates into Trip member variable
+     * Obtains data snapshot from firebase and creates new Trip object
+     * @param tripID
+     */
+    private void getPartyLocations(String tripID) {
+        Log.d(TAG, "getPartyLocations: obtaining updated locations from firebase.");
+
+        DataSnapshot dataSnapshot = mDataSnapshot.child("trips").child(tripID);
+        Trip trip = new Trip(new LatLng((Double)dataSnapshot.child("latitude").getValue(), (Double)dataSnapshot.child("longitude").getValue()),
+                (String)dataSnapshot.child("address").getValue(), tripID);
+
+        //Add cars from data snapshot to trip object
+        for (DataSnapshot ds : dataSnapshot.child("cars").getChildren()) {
+            Log.d(TAG, "getPartyLocations: Joining trip (car info): " + ds.toString());
+
+            trip.addCar(new Car((int)ds.getKey().charAt(0), new LatLng(((Map<String, Double>)ds.getValue()).get("latitude"),
+                    ((Map<String, Double>)ds.getValue()).get("latitude")), tripID));
+        }
+        mTrip = trip;
 
 
+    }
 
-
-
-
-
-
-
+    /**
+     * Function to update all car locations in Map
+     */
+    private void updatePartyLocations() {
+        //TODO: update all cars in Map using Trip member--use after calling getPartyLocations()
+    }
 }

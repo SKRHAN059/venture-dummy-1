@@ -19,19 +19,28 @@ import android.widget.TextView;
 import org.w3c.dom.Text;
 
 public class StartActivity extends AppCompatActivity {
-    private Button button;
+    private Button mCreateTripButton;
+    private Button mJoinTripButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_start);
-        button = findViewById(R.id.join_trip);
+        mCreateTripButton = findViewById(R.id.create_trip);
+        mJoinTripButton = findViewById(R.id.join_trip);
 
-        button.setOnClickListener(new View.OnClickListener() {
+        mCreateTripButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 Log.d("StartActivity", "\'Create Trip\' button clicked");
                 openMapActivity();
+            }
+        });
+
+        mJoinTripButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openJoinTripActivity();
             }
         });
     }
@@ -40,9 +49,16 @@ public class StartActivity extends AppCompatActivity {
      * method to start map activity
      * ends current activity
      */
-    public void openMapActivity(){
+    public void openMapActivity() {
         Log.d("StartActivity", "opening map activity");
         Intent intent = new Intent(this, MapsActivity.class);
+        startActivity(intent);
+        finish();
+    }
+
+    public void openJoinTripActivity() {
+        Log.d("StartActivity", "opening join trip activity");
+        Intent intent = new Intent(this, JoinTripActivity.class);
         startActivity(intent);
         finish();
     }

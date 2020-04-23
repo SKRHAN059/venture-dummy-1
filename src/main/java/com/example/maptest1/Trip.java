@@ -1,5 +1,9 @@
 package com.example.maptest1;
 
+import com.google.android.gms.maps.model.LatLng;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
 public class Trip implements Destination {
@@ -8,8 +12,16 @@ public class Trip implements Destination {
     private String destAddress;
     private double tLat;
     private double tLong;
+    private List<Car> mCars;
 
-    public Trip(double aLat, double aLong, String aAddress) {
+    public Trip(LatLng aLatLng, String aAddress, String aID) {
+        tLat = aLatLng.latitude;
+        tLong = aLatLng.longitude;
+        destAddress = aAddress;
+        tripID = aID;
+        mCars = new ArrayList<>();
+    }
+    public Trip(LatLng aLatLng, String aAddress) {
         Random rand = new Random();
         tripID = "";
         for (int i = 0; i < 4; i++) {
@@ -20,46 +32,53 @@ public class Trip implements Destination {
                 tripID += (char) num;
             }
         }
-        tripID = "<br /><font color=#2B97EB>"+tripID+"</font>";
         addTraveler();
-        this.tLat = aLat;
-        this.tLong = aLong;
-        this.destAddress = aAddress;
+        tLat = aLatLng.latitude;
+        tLong = aLatLng.longitude;
+        destAddress = aAddress;
+        mCars = new ArrayList<>();
     }
 
     public String getTripID() {
-        System.out.println("\n\n\nTRIP ID: " + tripID + "\n\n\n");
-        return this.tripID;
+        return tripID;
     }
 
     public String getDestAddress() {
-        return this.destAddress;
+        return destAddress;
     }
 
     public double getTripLat() {
-        return this.tLat;
+        return tLat;
     }
 
     public double getTripLong() {
-        return this.tLong;
+        return tLong;
+    }
+
+    public List<Car> getCars() {
+        return mCars;
     }
 
     public void addTraveler(){
-        this.travelers++;
+        travelers++;
     }
 
     public void removeTraveler(){
-        this.travelers--;
+        travelers--;
         checkTravelers();
     }
 
     public void checkTravelers(){
-        if (this.travelers <= 0) {
+        if (travelers <= 0) {
             deleteDestination();
         }
     }
 
     public void deleteDestination(){
         //TODO: delete trip
+    }
+
+    public void addCar(Car aCar) {
+        mCars.add(aCar);
     }
 }
