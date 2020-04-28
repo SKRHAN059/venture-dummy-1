@@ -12,11 +12,14 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import android.util.Pair;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -28,7 +31,12 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.model.BitmapDescriptor;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
+import com.google.android.gms.maps.model.Polyline;
+import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.libraries.places.api.Places;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -46,10 +54,25 @@ import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
-import java.util.Arrays;
-import java.util.Map;
+import com.google.maps.DirectionsApiRequest;
+import com.google.maps.GeoApiContext;
+import com.google.maps.PendingResult;
+import com.google.maps.internal.PolylineEncoding;
+import com.google.maps.model.DirectionsLeg;
+import com.google.maps.model.DirectionsResult;
+import com.google.maps.model.DirectionsRoute;
 
-public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import static android.graphics.BlendMode.HUE;
+
+public class MapsActivity extends FragmentActivity implements
+        OnMapReadyCallback,
+        GoogleMap.OnMarkerClickListener {
 
     //Main activity variables
     private static GoogleMap mMap;
@@ -57,21 +80,32 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private DataSnapshot mDataSnapshot;
     private Trip mTrip;
     private Car mCar;
+    private String mTripID;
+    private boolean mEndTrip = false;
 
     //Location variables
     private LatLng mCurrentLocation;
+    private final Object mLocationLock = new Object();
     private boolean mLocationPermissionGranted = false;
     private FusedLocationProviderClient mFusedLocationProviderClient;
     private ImageView mGpsIcon;
     private Place mPlace;
     private Handler mHandler = new Handler();
     private Runnable mRunnable;
+    private Marker mPlaceMarker;
+
+    //Direction variables
+    private GeoApiContext mGeoApiContext = null;
+    private List<PolyPair> mPolylineData = new ArrayList<>();
+    private PolyPair mTripPolylineData;
+    private String mMarkerClickedTitle;
 
     //Buttons
     private Button mBackButton;
     private Button mMapRouteButton;
+    private Button mStartTripButton;
     private Button mRouteCancelButton;
-    private Marker mPlaceMarker;
+    private Button mEndTripButton;
 
     //Logging
     private final String TAG = "MapsActivity";
@@ -81,17 +115,22 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Log.d(TAG, "onCreate: creating mapsActivity");
         super.onCreate(savedInstanceState);
+        Log.d(TAG, "onCreate: creating mapsActivity");
         setContentView(R.layout.activity_maps);
 
         // Initialize the SDK
+        Log.d(TAG, "onCreate: initializing SDK");
         Places.initialize(getApplicationContext(), mApiKey);
 
         // Initialize the AutocompleteSupportFragment.
+        Log.d(TAG, "onCreate: initializing AutoCompleteSupportFragment");
         AutocompleteSupportFragment autocompleteFragment = (AutocompleteSupportFragment)
                 getSupportFragmentManager().findFragmentById(R.id.autocomplete_fragment);
 
         // Specify the types of place data to return.
+        Log.d(TAG, "onCreate: specifying place field types");
         autocompleteFragment.setPlaceFields(Arrays.asList(Place.Field.ADDRESS, Place.Field.LAT_LNG));
 
         // Set up a PlaceSelectionListener to handle the response.
@@ -104,30 +143,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 mMapRouteButton.setVisibility(View.VISIBLE);
                 mRouteCancelButton.setVisibility(View.VISIBLE);
                 Log.i(TAG, "Place: " + place.getName() + ", " + place.getId());
-
-                mMapRouteButton.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        //TODO: route polylines from current location to marker
-
-                        //temporary call to populate trip into firebase
-                        createTrip();
-                    }
-                });
-
-                mRouteCancelButton.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        mPlaceMarker.remove();
-                        mMapRouteButton.setVisibility(View.GONE);
-                        mRouteCancelButton.setVisibility(View.GONE);
-                        mBackButton.setVisibility(View.VISIBLE);
-
-                        TextView tripIDView = findViewById(R.id.trip_id);
-                        tripIDView.setVisibility(View.GONE);
-                        tripIDView.setText("Trip Key");
-                    }
-                });
             }
 
             @Override
@@ -143,6 +158,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 if (dataSnapshot.exists()) {
                     Log.d(TAG, "onDataChange: " + dataSnapshot.toString());
                     mDataSnapshot = dataSnapshot;
+                    // if all car instances removed from database, remove trip from database
+                    if (mEndTrip) {
+                        if (!mDataSnapshot.child("trips").child(mTripID).child("cars").exists()) {
+                            Log.d(TAG, "onDataChange: all cars are gone, remove trip instance from firebase");
+                            mDatabase.child("trips").child(mTripID).setValue(null);
+                        }
+                    }
                 }
             }
 
@@ -152,11 +174,14 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             }
         });
 
+        Log.d(TAG, "onCreate: permissions and location");
         if (checkLocationServices()) {
             if (!mLocationPermissionGranted) {
                 getLocationPermission();
             }
         }
+
+        Log.d(TAG, "NEED TO CALL JOIN TRIP");
     }
 
     /**
@@ -166,6 +191,10 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
+
+        if (mGeoApiContext == null) {
+            mGeoApiContext = new GeoApiContext.Builder().apiKey(mApiKey).build();
+        }
     }
 
     /**
@@ -203,6 +232,14 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         mRouteCancelButton = findViewById(R.id.cancel_map_route);
         mRouteCancelButton.setVisibility(View.GONE);
 
+        //Initialize start trip button and set visibility
+        mStartTripButton = findViewById(R.id.start_trip);
+        mStartTripButton.setVisibility(View.GONE);
+
+        //Initialize end trip button and set visibility
+        mEndTripButton = findViewById(R.id.end_trip);
+        mEndTripButton.setVisibility(View.GONE);
+
         //Set GPS fixed widget to move camera to current location
         mGpsIcon = findViewById(R.id.ic_gps_icon);
 
@@ -214,10 +251,80 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             mGpsIcon.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    getDeviceLocation();
+                    updateDeviceLocation();
+                    mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mCurrentLocation, 16f));
                 }
             });
         }
+
+        //button listener to populate routes onto map
+        mMapRouteButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                getPlaceDirections(mPlaceMarker);
+                mMapRouteButton.setVisibility(View.GONE);
+                mStartTripButton.setVisibility(View.VISIBLE);
+            }
+        });
+
+        // button listener to restart map activity
+        mRouteCancelButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                mPlaceMarker.remove();
+                mMapRouteButton.setVisibility(View.GONE);
+                mRouteCancelButton.setVisibility(View.GONE);
+                mStartTripButton.setVisibility(View.GONE);
+                mBackButton.setVisibility(View.VISIBLE);
+
+                TextView tripIDView = findViewById(R.id.trip_id);
+                tripIDView.setVisibility(View.GONE);
+                tripIDView.setText("Trip Key");
+
+                for (PolyPair p : mPolylineData) {
+                    p.getPolyline().remove();
+                }
+
+                mPolylineData.clear();
+            }
+        });
+
+        //button listener to start trip with selected polyline
+        mStartTripButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                mStartTripButton.setVisibility(View.GONE);
+                mRouteCancelButton.setVisibility(View.GONE);
+                mEndTripButton.setVisibility(View.VISIBLE);
+
+                for (PolyPair p : mPolylineData) {
+                    if (!p.getPolyline().getId().equals(mTripPolylineData.getPolyline().getId())) {
+                        p.getPolyline().remove();
+                    }
+                }
+
+                createTrip();
+            }
+        });
+
+        mEndTripButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.d(TAG, "endTripButton: button clicked");
+                mHandler.removeCallbacks(mRunnable);
+                mEndTripButton.setVisibility(View.GONE);
+                mBackButton.setVisibility(View.VISIBLE);
+                mPlaceMarker.remove();
+                try {
+                    endTrip();
+                } catch (InterruptedException e) {
+                    Log.d(TAG, "endTripButton: " + e.toString());
+                }
+            }
+        });
+
+        //set marker click listener
+        mMap.setOnMarkerClickListener(this);
 
         // Add a marker in Sydney and move the camera
         LatLng sydney = new LatLng(17.5707, -3.9962);
@@ -236,18 +343,49 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     if (task.isSuccessful()) {
                         Location currentLocation = (Location) task.getResult();
                         if (mMap != null && currentLocation!= null) {
-                            Log.d(TAG, "Obtaining and mapping to current location");
+                            Log.d(TAG, "getDeviceLocation: Obtaining and mapping to current location");
                             mCurrentLocation = new LatLng(currentLocation.getLatitude(), currentLocation.getLongitude());
-                            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mCurrentLocation, 16f));
-                            mMap.getUiSettings().setMyLocationButtonEnabled(false);
-
-                            //If join trip activity
-                            String tripID = getIntent().getStringExtra("tripID");
-                            if (tripID != null) {
-                                Log.d(TAG, "Calling join trip");
-                                joinTrip(tripID);
+                            if (getIntent().getStringExtra("tripID") != null) {
+                                Log.d(TAG, "getDeviceLocation: calling joinTrip()");
+                                joinTrip(getIntent().getStringExtra("tripID"));
+                                mBackButton.setVisibility(View.GONE);
+                                mEndTripButton.setVisibility(View.VISIBLE);
                             }
+                            Log.d(TAG, "getDeviceLocation: current location found");
+
+                            mMap.getUiSettings().setMyLocationButtonEnabled(false);
+                            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mCurrentLocation, 16f));
                         }
+                    }
+                }
+            });
+        }
+    }
+
+    private void updateDeviceLocation() {
+        mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
+        if (mLocationPermissionGranted) {
+            Task location = mFusedLocationProviderClient.getLastLocation();
+            location.addOnCompleteListener(task -> {
+                if (task.isSuccessful()) {
+                    Location currentLocation = (Location) task.getResult();
+                    Log.d(TAG, "updateDeviceLocation: Obtaining and mapping to current location");
+                    mCurrentLocation = new LatLng(currentLocation.getLatitude(), currentLocation.getLongitude());
+                    if (mCar != null) {
+                        Log.d(TAG, "updateDeviceLocation: Updating current car coordinates");
+                        mCar.setLat(mCurrentLocation.latitude);
+                        mCar.setLong(mCurrentLocation.longitude);
+                    }
+                    Log.d(TAG, "updateDeviceLocation: current location found");
+                    mMap.getUiSettings().setMyLocationButtonEnabled(false);
+
+                    //Add car info to trip in firebase
+                    if (mTrip != null &&  mCar != null) {
+                        Log.d(TAG, "updateDeviceLocation: writing car info to database: " + mCar.getCarName());
+                        mDatabase.child("trips").child(mTrip.getTripID()).child("cars")
+                                .child(mCar.getCarName()).child("latitude").setValue(mCar.getCarLat());
+                        mDatabase.child("trips").child(mTrip.getTripID()).child("cars")
+                                .child(mCar.getCarName()).child("longitude").setValue(mCar.getCarLong());
                     }
                 }
             });
@@ -307,7 +445,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 }
             }
         }
-
     }
 
     /**
@@ -390,6 +527,11 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
      */
     public void locateAddress(Place place) {
         mPlaceMarker = markLocationOnMap(place.getLatLng(), place.getAddress());
+        mPlaceMarker.setTitle(place.getAddress());
+        mPlaceMarker.showInfoWindow();
+
+        //Set default marker clicked
+        mMarkerClickedTitle = place.getAddress();
     }
 
     /**
@@ -431,19 +573,85 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         mDatabase.child("trips").child(mTrip.getTripID()).child("cars").child(mCar.getCarName()).child("latitude").setValue(mCar.getCarLat());
         mDatabase.child("trips").child(mTrip.getTripID()).child("cars").child(mCar.getCarName()).child("longitude").setValue(mCar.getCarLong());
 
-        startPartyLocationsRunnable();
+        //Initialize default marker title to destination address
+        mMarkerClickedTitle = mTrip.getDestAddress();
+
+        startTripRunnable();
+    }
+
+    private void endTrip() throws InterruptedException {
+        mEndTrip = true;
+        Log.d(TAG, "endTrip(): ending trip");
+        TimeUnit.MILLISECONDS.sleep(250); //set 250ms delay for runnable to end
+
+        //remove car instance from firebase
+        mDatabase.child("trips").child(mTrip.getTripID()).child("cars")
+                .child(mCar.getCarName()).child("latitude").setValue(null);
+        mDatabase.child("trips").child(mTrip.getTripID()).child("cars")
+                .child(mCar.getCarName()).child("longitude").setValue(null);
+
+        //remove current polyline data
+        for (PolyPair p : mPolylineData) {
+            p.getPolyline().remove();
+        }
+        mPolylineData.clear();
+
+        //remove party's polyline data
+        try {
+            for (Car car : mTrip.getCars()) {
+                for (PolyPair p : car.getPolyineData()) {
+                    p.getPolyline().remove();
+                }
+                car.getPolyineData().clear();
+                car.getCarPolylineData().getPolyline().remove();
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "endTrip: not yet defined: " + e.getMessage());
+        }
+
+        //remove party's markers
+        removeCarMarkers();
+
+        mTripID = mTrip.getTripID();
+        mTrip = null;
+
+        //Remove text view for trip ID
+        TextView tripIDView = findViewById(R.id.trip_id);
+        tripIDView.setText("");
+        tripIDView.setVisibility(View.GONE);
+
+//        if (getIntent().getStringExtra("tripID") != null) {
+//            Intent intent = new Intent(this, StartActivity.class);
+//            startActivity(intent);
+//            finish();
+//        }
+
+        //TODO: end current trip
+        //remove instance of car from trip in firebase
+        //if all cars are removed from trip in firebase, then remove trip instance from firebase
     }
 
     /**
      * Runnable to request party (car) locations every 4 seconds
      */
-    private void startPartyLocationsRunnable(){
+    private void startTripRunnable(){
         Log.d(TAG, "startUserLocationsRunnable: starting runnable for retrieving updated locations.");
         mHandler.postDelayed(mRunnable = new Runnable() {
             @Override
             public void run() {
                 mHandler.postDelayed(mRunnable, 4000);
+                Log.d(TAG, "startTripRunnable: calling updateDeviceLocation");
+                updateDeviceLocation();
+                Log.d(TAG, "startTripRunnable: calling getPlaceDirections(mPlaceMarker)");
+                getPlaceDirections(mPlaceMarker);
+
+                removeCarPolylines();
+                getPartyLocations(mTrip.getTripID());
                 updatePartyLocations();
+                for (Car car : mTrip.getCars()) {
+                    if (car.getCarID() != mCar.getCarID())
+                        getCarDirections(mPlaceMarker, car);
+                }
             }
         }, 4000);
     }
@@ -454,32 +662,57 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
      */
     private void joinTrip(String tripID) {
         if (mDataSnapshot != null) {
-            Log.d(TAG, "Joining trip: " + mDataSnapshot.toString());
-
+            //Initialize trip object with info from firebase
             DataSnapshot dataSnapshot = mDataSnapshot.child("trips").child(tripID);
+            Log.d(TAG, "joinTrip: " + dataSnapshot.toString());
+
+            //Check for invalid tripID from user
             if (dataSnapshot.getValue() == null) {
                 //TODO: handle invalid trip ID entry from user
                 Log.d(TAG, "joinTrip: Exiting: Handle trip IDs not in Firebase");
                 System.exit(0);
             }
 
+            String address = (String) dataSnapshot.child("address").getValue();
+            String id = (String) dataSnapshot.child("id").getValue();
+            double lat = (Double) dataSnapshot.child("latitude").getValue();
+            double lng = (Double) dataSnapshot.child("longitude").getValue();
+            LatLng tripLatLng = new LatLng(lat, lng);
+            mTrip = new Trip(tripLatLng, address, id);
+
+            mPlaceMarker = markLocationOnMap(tripLatLng, mTrip.getDestAddress());
+            mPlaceMarker.setTitle(mTrip.getDestAddress());
+            mPlaceMarker.showInfoWindow();
+
+            //calculate directions and draw polyline
+            getPlaceDirections(mPlaceMarker);
+
+            //add all car instances from firebase into trip object
             getPartyLocations(tripID);
 
             //iterate through all cars in trip to determine new car ID
-            int newCarID = 0;
+            int newCarID = 65;
             for (int i = 0; i < mTrip.getCars().size(); i++) {
-                if (mTrip.getCars().get(i).getCarID() > newCarID) {
-                    newCarID = mTrip.getCars().get(i).getCarID();
+                if (mTrip.getCars().get(i).getCarID() == newCarID) {
+                    newCarID++;
+                } else {
+                    break;
                 }
             }
-            newCarID++;
-            Car newCar = new Car(newCarID, mCurrentLocation, tripID);
-            mTrip.addCar(newCar);
+            mCar = new Car(newCarID, mCurrentLocation, tripID);
+            mTrip.addCar(mCar);
+
 
             //Add car info to trip in firebase respectively
-            Log.d(TAG, "Joining trip: " + newCar.getCarName());
-            mDatabase.child("trips").child(tripID).child("cars").child(newCar.getCarName()).child("latitude").setValue(mCurrentLocation.latitude);
-            mDatabase.child("trips").child(tripID).child("cars").child(newCar.getCarName()).child("longitude").setValue(mCurrentLocation.longitude);
+            Log.d(TAG, "Joining trip: " + mCar.getCarName());
+            mDatabase.child("trips").child(tripID).child("cars").child(mCar.getCarName()).child("latitude").setValue(mCurrentLocation.latitude);
+            mDatabase.child("trips").child(tripID).child("cars").child(mCar.getCarName()).child("longitude").setValue(mCurrentLocation.longitude);
+
+            //Initialize default marker title to destination address
+            mMarkerClickedTitle = mTrip.getDestAddress();
+
+            //Initiate runnable to update polylines and car information
+            startTripRunnable();
         }
     }
 
@@ -492,25 +725,282 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         Log.d(TAG, "getPartyLocations: obtaining updated locations from firebase.");
 
         DataSnapshot dataSnapshot = mDataSnapshot.child("trips").child(tripID);
-        Trip trip = new Trip(new LatLng((Double)dataSnapshot.child("latitude").getValue(), (Double)dataSnapshot.child("longitude").getValue()),
-                (String)dataSnapshot.child("address").getValue(), tripID);
 
+        removeCarMarkers();
+        mTrip.clearCars();
         //Add cars from data snapshot to trip object
+        Log.d(TAG, "getPartyLocations: adding car info from database to trip object");
         for (DataSnapshot ds : dataSnapshot.child("cars").getChildren()) {
             Log.d(TAG, "getPartyLocations: Joining trip (car info): " + ds.toString());
-
-            trip.addCar(new Car((int)ds.getKey().charAt(0), new LatLng(((Map<String, Double>)ds.getValue()).get("latitude"),
-                    ((Map<String, Double>)ds.getValue()).get("latitude")), tripID));
+            mTrip.addCar(new Car((int) ds.getKey().charAt(0), new LatLng(((Map<String, Double>) ds.getValue()).get("latitude"),
+                    ((Map<String, Double>) ds.getValue()).get("longitude")), tripID));
         }
-        mTrip = trip;
-
-
     }
 
     /**
      * Function to update all car locations in Map
      */
     private void updatePartyLocations() {
-        //TODO: update all cars in Map using Trip member--use after calling getPartyLocations()
+        for (Car car : mTrip.getCars()) {
+            if (car.getCarID() == mCar.getCarID())
+                continue;
+//            Log.d(TAG, "updatePartyLocations: Lat:" + car.getCarLat() + ", Long:" + car.getCarLong());
+            MarkerOptions markerOptions = new MarkerOptions()
+                    .position(car.getLatLng())
+                    .title(car.getCarName());
+            markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
+            car.setMarker(mMap.addMarker(markerOptions));
+        }
+    }
+
+    private void getPlaceDirections(Marker marker){
+        Log.d(TAG, "getPlaceDirections: calculating directions.");
+
+        com.google.maps.model.LatLng destination = new com.google.maps.model.LatLng(
+                marker.getPosition().latitude,
+                marker.getPosition().longitude);
+        DirectionsApiRequest directions = new DirectionsApiRequest(mGeoApiContext);
+
+        directions.alternatives(true);
+        directions.origin(new com.google.maps.model.LatLng(
+                mCurrentLocation.latitude,
+                mCurrentLocation.longitude));
+
+        directions.destination(destination).setCallback(new PendingResult.Callback<DirectionsResult>() {
+            @Override
+            public void onResult(DirectionsResult result) {
+                //add polyline to map
+                drawPolylines(result);
+            }
+
+            @Override
+            public void onFailure(Throwable e) {
+                Log.e(TAG, "calculateDirections: Failed to get directions: " + e.getMessage() );
+            }
+        });
+    }
+
+    private void drawPolylines(final DirectionsResult result){
+        //post onto main thread to update map
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                float min = Float.MAX_VALUE;
+                for(DirectionsRoute route: result.routes){
+                    List<com.google.maps.model.LatLng> path = PolylineEncoding.decode(route.overviewPolyline.getEncodedPath());
+
+                    List<LatLng> paths = new ArrayList<>();
+                    Log.d(TAG, "drawPolylines: getting polyline route");
+                    for(com.google.maps.model.LatLng latLng: path) {
+                        paths.add(new LatLng(latLng.lat, latLng.lng));
+                    }
+
+                    Polyline polyline = mMap.addPolyline(new PolylineOptions().addAll(paths));
+                    polyline.setWidth(10);
+                    polyline.setVisible(false);
+
+                    mPolylineData.add(new PolyPair(polyline, route.legs[0]));
+
+                    if (route.legs[0].duration.inSeconds < min) {
+                        min = route.legs[0].duration.inSeconds;
+                        drawPolylineHelper(polyline);
+                        if (mTrip == null) {
+                            zoomOnPolylines(polyline.getPoints());
+                        }
+                    }
+                }
+                mPlaceMarker.setSnippet("Duration: " + mTripPolylineData.getDirectionsLeg().duration);
+            }
+        });
+    }
+
+    public void drawPolylineHelper(Polyline polyline) {
+        for (PolyPair p : mPolylineData) {
+            if (p.getPolyline().getId().equals(polyline.getId())) {
+                //highlight selected trip option
+                p.getPolyline().setVisible(true);
+                if (mMarkerClickedTitle.length() > 1) {
+                    p.getPolyline().setColor(Color.BLUE);
+                    p.getPolyline().setZIndex(1);
+                } else {
+                    p.getPolyline().setColor(Color.GREEN);
+                    p.getPolyline().setZIndex(0);
+                }
+
+                try {
+                    mTripPolylineData.getPolyline().setPoints(p.getPolyline().getPoints());
+                    mTripPolylineData.setDirectionsLeg(p.getDirectionsLeg());
+                    Log.d(TAG, "drawPolylineHelper: setting points for existing polyline");
+                } catch (Exception e) {
+                    mTripPolylineData = p;
+                }
+
+                //update place marker with trip option details
+                mPlaceMarker.setSnippet("Duration: " + p.getDirectionsLeg().duration);
+            } else {
+                p.getPolyline().remove();
+            }
+        }
+    }
+
+    public void zoomOnPolylines(List<LatLng> aLatLngList) {
+        LatLngBounds.Builder builder = new LatLngBounds.Builder();
+        for (LatLng latLng : aLatLngList)
+            builder.include(latLng);
+        int padding = 170;
+        LatLngBounds bounds = builder.build();
+
+        mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding), 300, null);
+    }
+
+    private void getCarDirections(Marker marker, Car car){
+        Log.d(TAG, "getCarDirections: calculating directions.");
+
+        com.google.maps.model.LatLng destination = new com.google.maps.model.LatLng(
+                marker.getPosition().latitude,
+                marker.getPosition().longitude);
+        DirectionsApiRequest directions = new DirectionsApiRequest(mGeoApiContext);
+
+        directions.alternatives(true);
+        directions.origin(new com.google.maps.model.LatLng(
+                car.getCarLat(),
+                car.getCarLong()));
+
+        directions.destination(destination).setCallback(new PendingResult.Callback<DirectionsResult>() {
+            @Override
+            public void onResult(DirectionsResult result) {
+                //add polyline to map
+                drawCarPolyline(result, car);
+            }
+
+            @Override
+            public void onFailure(Throwable e) {
+                Log.e(TAG, "calculateDirections: Failed to get directions: " + e.getMessage() );
+            }
+        });
+    }
+
+    private void drawCarPolyline(final DirectionsResult result, Car car) {
+        //post onto main thread to update map
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                float min = Float.MAX_VALUE;
+                for(DirectionsRoute route: result.routes){
+                    List<com.google.maps.model.LatLng> path = PolylineEncoding.decode(route.overviewPolyline.getEncodedPath());
+
+                    List<LatLng> paths = new ArrayList<>();
+                    Log.d(TAG, "drawCarPolyline: getting polyline route");
+                    for(com.google.maps.model.LatLng latLng: path) {
+                        paths.add(new LatLng(latLng.lat, latLng.lng));
+                    }
+
+                    Polyline polyline = mMap.addPolyline(new PolylineOptions().addAll(paths));
+                    polyline.setWidth(10);
+                    polyline.setVisible(false);
+
+                    car.getPolyineData().add(new PolyPair(polyline, route.legs[0]));
+
+                    if (route.legs[0].duration.inSeconds < min) {
+                        min = route.legs[0].duration.inSeconds;
+                        drawCarPolylinesHelper(polyline, car);
+                    }
+                }
+                for (PolyPair p : car.getPolyineData()) {
+                    if (!p.getPolyline().getId().equals(car.getCarPolylineData().getPolyline().getId())) {
+                        p.getPolyline().remove();
+                    }
+                }
+                showMarkerSnippet();
+            }
+        });
+    }
+
+    public void drawCarPolylinesHelper(Polyline polyline, Car car) {
+        for (PolyPair p : car.getPolyineData()) {
+            if (p.getPolyline().getId().equals(polyline.getId())) {
+                //highlight selected trip option
+                p.getPolyline().setVisible(true);
+                p.getPolyline().setColor(Color.GREEN);
+                p.getPolyline().setZIndex(0);
+
+                try {
+                    car.getCarPolylineData().getPolyline().setPoints(p.getPolyline().getPoints());
+                    car.getCarPolylineData().setDirectionsLeg(p.getDirectionsLeg());
+                    Log.d(TAG, "drawCarPolylinesHelper: setting points for existing polyline");
+                } catch (Exception e) {
+                    car.setCarPolylineData(p);
+                }
+
+                //update place marker with trip option details
+                if (car.getMarker() != null)
+                    car.getMarker().setSnippet("Duration: " + p.getDirectionsLeg().duration);
+            } else {
+                p.getPolyline().remove();
+            }
+        }
+    }
+
+    private void removeCarMarkers() {
+        if (mTrip.getCars() != null) {
+            for (Car car : mTrip.getCars()) {
+                if (car.getMarker() != null)
+                    car.getMarker().remove();
+            }
+        }
+    }
+
+    @Override
+    public boolean onMarkerClick(Marker marker) {
+        mMarkerClickedTitle = marker.getTitle();
+        return false;
+    }
+
+    private void showMarkerSnippet() {
+        if (mMarkerClickedTitle != null) {
+            try {
+                if (mMarkerClickedTitle.length() > 1) {
+                    mPlaceMarker.setSnippet("Duration: " + mTripPolylineData.getDirectionsLeg().duration);
+                    mPlaceMarker.showInfoWindow();
+                    mTripPolylineData.getPolyline().setZIndex(1);
+                    mTripPolylineData.getPolyline().setColor(Color.BLUE);
+                    for (Car p : mTrip.getCars()) {
+                        if (p.getCarID() != mCar.getCarID()) {
+                            p.getCarPolylineData().getPolyline().setZIndex(0);
+                            p.getCarPolylineData().getPolyline().setColor(Color.GREEN);
+                        }
+                    }
+                } else {
+                    mTripPolylineData.getPolyline().setZIndex(0);
+                    mTripPolylineData.getPolyline().setColor(Color.GREEN);
+                    for (Car p : mTrip.getCars()) {
+                        if (p.getCarName().equals(mMarkerClickedTitle)) {
+
+                            p.getMarker().setSnippet("Duration: " + p.getCarPolylineData().getDirectionsLeg().duration);
+                            p.getMarker().showInfoWindow();
+                            p.getCarPolylineData().getPolyline().setZIndex(1);
+                            p.getCarPolylineData().getPolyline().setColor(Color.BLUE);
+
+                        } else {
+                            p.getCarPolylineData().getPolyline().setZIndex(0);
+                            p.getCarPolylineData().getPolyline().setColor(Color.GREEN);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "updatePartyLocations: not yet defined: " + e.getMessage());
+            }
+        }
+    }
+
+    private void removeCarPolylines() {
+        for (Car car : mTrip.getCars()) {
+            try {
+                car.getPolyineData().clear();
+                car.getCarPolylineData().getPolyline().remove();
+            } catch (Exception e) {
+                Log.d(TAG, "removeCarPolylines: not yet defined: " + e.getMessage());
+            }
+        }
     }
 }

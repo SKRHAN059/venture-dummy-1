@@ -19,6 +19,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+    compileOptions {
+        sourceCompatibility = 1.8
+        targetCompatibility = 1.8
+    }
 }
 
 dependencies {
@@ -39,4 +43,8 @@ dependencies {
 
     //Google Locations
     implementation 'com.google.android.gms:play-services-location:17.0.0'
+
+    //Google Directions
+    implementation 'com.google.maps:google-maps-services:0.11.0'
+    implementation 'org.slf4j:slf4j-simple:1.7.25'
 }

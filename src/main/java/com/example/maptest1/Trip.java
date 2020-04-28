@@ -14,6 +14,7 @@ public class Trip implements Destination {
     private double tLong;
     private List<Car> mCars;
 
+    //constructor for joining a trip
     public Trip(LatLng aLatLng, String aAddress, String aID) {
         tLat = aLatLng.latitude;
         tLong = aLatLng.longitude;
@@ -21,6 +22,8 @@ public class Trip implements Destination {
         tripID = aID;
         mCars = new ArrayList<>();
     }
+
+    //constructor for creating a new trip
     public Trip(LatLng aLatLng, String aAddress) {
         Random rand = new Random();
         tripID = "";
@@ -59,6 +62,8 @@ public class Trip implements Destination {
         return mCars;
     }
 
+    public int getTravelers() { return travelers; }
+
     public void addTraveler(){
         travelers++;
     }
@@ -68,17 +73,22 @@ public class Trip implements Destination {
         checkTravelers();
     }
 
-    public void checkTravelers(){
+    public void checkTravelers() {
         if (travelers <= 0) {
             deleteDestination();
         }
     }
 
-    public void deleteDestination(){
+    public void deleteDestination() {
         //TODO: delete trip
     }
 
     public void addCar(Car aCar) {
         mCars.add(aCar);
+        addTraveler();
+    }
+
+    public void clearCars() {
+        mCars.clear();
     }
 }
